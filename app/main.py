@@ -1,6 +1,9 @@
 from datetime import datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.schemas import AITurnRequest, TurnPhase
+from app.logic import choose_setup, choose_turn
 
 app = FastAPI(
     title="Jogador Inteligente PI5",
@@ -25,3 +28,25 @@ async def health():
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@app.post("/move")
+async def move(request: AITurnRequest):
+    """Recebe o estado do jogo e retorna a jogada do jogador inteligente."""
+    print(f"[move] game={request.game_id} turn={request.turn_number} phase={request.turn_phase}")
+
+    if request.turn_phase == TurnPhase.SETUP_PLACEMENT:
+        result = choose_setup(request.board)
+        if result is None:
+            raise HTTPException(status_code=422, detail="Sem posições disponíveis para setup")
+        print(f"[setup] -> row={result.row} col={result.col}")
+        return result
+
+    if request.turn_phase == TurnPhase.PLAYER_TURN:
+        result = choose_turn(request.board, request.your_team)
+        if result is None:
+            raise HTTPException(status_code=422, detail="Sem jogadas válidas disponíveis")
+        print(f"[turn] -> professor={result.professor} move_to={result.move_to} mentor_at={result.mentor_at}")
+        return result
+
+    raise HTTPException(status_code=400, detail=f"Fase desconhecida: {request.turn_phase}")

@@ -1,0 +1,1 @@
+"""Estratégias do jogador inteligente."""
