@@ -10,12 +10,14 @@ from app.logic.config import ACTIVE_STRATEGY
 from app.logic.strategies.random_bot import random_setup, random_turn
 from app.logic.strategies.heuristic import heuristic_setup, heuristic_turn
 from app.logic.strategies.minimax import minimax_setup, minimax_turn
+from app.logic.strategies.rl import rl_setup, rl_turn
 
 
 _STRATEGIES = {
     "random": (random_setup, random_turn),
     "heuristic": (heuristic_setup, heuristic_turn),
     "minimax": (minimax_setup, minimax_turn),
+    "rl": (rl_setup, rl_turn),
 }
 
 

@@ -1,7 +1,7 @@
 """Configurações do jogador inteligente."""
 
-# Estratégia ativa: "random", "heuristic" ou "minimax"
-ACTIVE_STRATEGY = "heuristic"
+# Estratégia ativa: "random", "heuristic", "minimax" ou "rl"
+ACTIVE_STRATEGY = "rl"
 
 # Configurações do Minimax
 MINIMAX_DEPTH = 3

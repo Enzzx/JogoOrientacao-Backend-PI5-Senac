@@ -28,3 +28,8 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Checkpoints intermediarios e logs de treino (modelo final eh comitado)
+training/models/checkpoints/
+training/logs/
+!training/logs/.gitkeep

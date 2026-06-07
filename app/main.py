@@ -11,6 +11,18 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+@app.on_event("startup")
+async def startup_event():
+    """Pre-carrega o modelo RL na inicializacao."""
+    from app.logic.config import ACTIVE_STRATEGY
+
+    print(f"[startup] Estrategia ativa: {ACTIVE_STRATEGY}")
+
+    if ACTIVE_STRATEGY == "rl":
+        from app.logic.strategies.rl import _load_model
+        _load_model()
+
 # CORS liberado para facilitar testes locais
 app.add_middleware(
     CORSMiddleware,
