@@ -8,6 +8,7 @@ Modos de jogo:
 - self_play: agente joga contra ele mesmo (mesma politica)
 """
 
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 import random
 
@@ -41,20 +42,25 @@ class JogoOrientacaoEnv(gym.Env):
     def __init__(
         self,
         opponent: str = "random",
+        opponent_pool=None,
         my_team: Optional[int] = None,
         max_turns: int = 100,
     ):
         """
         Args:
-            opponent: "random" para oponente aleatorio
+            opponent: "random" ou "self_play"
+            opponent_pool: instancia de OpponentPool (obrigatorio quando opponent="self_play")
             my_team: 1 (Turing), 2 (Lovelace) ou None (sorteado a cada episodio)
             max_turns: limite de turnos
         """
         super().__init__()
 
         self.opponent_type = opponent
+        self.opponent_pool = opponent_pool
         self.my_team_fixed = my_team
         self.max_turns = max_turns
+
+        self.current_opponent_path: Optional[Path] = None
 
         # Espaco de observacao: tensor 5x5x9
         self.observation_space = spaces.Box(
@@ -70,6 +76,10 @@ class JogoOrientacaoEnv(gym.Env):
         # Estado interno
         self.state: Optional[GameState] = None
         self.my_team: int = TEAM_TURING
+
+        # Tracking de uso dos professores no episodio
+        self.professor_last_used_turn: dict = {}
+        self.last_professor_used: Optional[str] = None
 
     def reset(
         self,
@@ -92,6 +102,14 @@ class JogoOrientacaoEnv(gym.Env):
         # Sorteia quem comeca (primeiro setup)
         first_team = random.choice([TEAM_TURING, TEAM_LOVELACE])
         self.state = GameState.initial(first_team=first_team)
+
+        # Sorteia oponente do pool para este episodio (se for self_play)
+        if self.opponent_type == "self_play" and self.opponent_pool is not None:
+            self.current_opponent_path = self.opponent_pool.sample_opponent()
+
+        # Resetar tracking de professores
+        self.professor_last_used_turn = {}
+        self.last_professor_used = None
 
         # Se o oponente comeca, ele joga ate ser nossa vez
         self._play_opponent_until_my_turn()
@@ -146,13 +164,28 @@ class JogoOrientacaoEnv(gym.Env):
 
         # Aplica acao do agente
         action_obj = decode_action(action, self.state)
+        professor_used = getattr(action_obj, "professor", None)
+
         if self.state.phase == Phase.SETUP_PLACEMENT:
             self.state = GameEngine.apply_setup(self.state, action_obj)
         else:
             self.state = GameEngine.apply_turn(self.state, action_obj)
 
         # Recompensa intermediaria pela jogada do agente
-        step_reward = compute_step_reward(state_before, self.state, self.my_team, config)
+        step_reward = compute_step_reward(
+            state_before,
+            self.state,
+            self.my_team,
+            config,
+            professor_used=professor_used,
+            last_professor=self.last_professor_used,
+            prof_last_used_turn=self.professor_last_used_turn,
+        )
+
+        # Atualiza tracking de professores
+        if professor_used is not None:
+            self.professor_last_used_turn[professor_used] = state_before.turn_number
+            self.last_professor_used = professor_used
 
         # Fim por vitoria do agente?
         if self.state.is_finished():
@@ -179,15 +212,16 @@ class JogoOrientacaoEnv(gym.Env):
             not self.state.is_finished()
             and self.state.current_team != self.my_team
         ):
-            if self.opponent_type == "random":
-                had_action = self._opponent_random_play()
-                if not had_action:
-                    self.state.winner = self.my_team
-                    return
-            else:
-                raise NotImplementedError(
-                    f"Tipo de oponente nao suportado: {self.opponent_type}"
-                )
+            had_action = self._opponent_play()
+            if not had_action:
+                self.state.winner = self.my_team
+                return
+
+    def _opponent_play(self) -> bool:
+        """Faz o oponente jogar. Retorna True se conseguiu, False se travou."""
+        if self.opponent_type == "random" or self.current_opponent_path is None:
+            return self._opponent_random_play()
+        return self._opponent_model_play()
 
     def _opponent_random_play(self) -> bool:
         """Oponente joga aleatoriamente uma acao valida.
@@ -208,6 +242,27 @@ class JogoOrientacaoEnv(gym.Env):
             action = random.choice(actions)
             self.state = GameEngine.apply_turn(self.state, action)
             return True
+
+    def _opponent_model_play(self) -> bool:
+        """Oponente eh um modelo treinado do pool."""
+        from training.envs.encoding import decode_action, encode_state, get_valid_action_mask
+
+        opp_team = self.state.current_team
+        obs = encode_state(self.state, my_team=opp_team)
+        mask = get_valid_action_mask(self.state)
+
+        if not mask.any():
+            return False
+
+        action_idx = self.opponent_pool.predict(self.current_opponent_path, obs, mask)
+        action_obj = decode_action(action_idx, self.state)
+
+        if self.state.phase == Phase.SETUP_PLACEMENT:
+            self.state = GameEngine.apply_setup(self.state, action_obj)
+        else:
+            self.state = GameEngine.apply_turn(self.state, action_obj)
+
+        return True
 
     def _build_info(self) -> Dict[str, Any]:
         return {

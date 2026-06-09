@@ -43,6 +43,11 @@ class RewardConfig:
     move_closer_to_high_cell: float = 0.05    # me aproximei de celula nivel alto
     blocked_opponent_winning_move: float = 0.4
 
+    # Diversidade de professores
+    used_different_professor: float = 0.5     # bonus generoso por trocar de professor
+    used_same_professor_streak: float = -0.5  # penalidade pesada por insistir no mesmo
+    professor_idle_penalty_per_turn: float = -0.2  # penalidade forte por professor parado
+
     # Penalidade por turno (incentiva ganhar rapido)
     per_turn: float = -0.01
 
@@ -79,6 +84,9 @@ def compute_step_reward(
     state_after: GameState,
     my_team: int,
     config: RewardConfig = DEFAULT_REWARD_CONFIG,
+    professor_used: Optional[str] = None,
+    last_professor: Optional[str] = None,
+    prof_last_used_turn: Optional[dict] = None,
 ) -> float:
     """Recompensa intermediaria apos uma acao do agente.
 
@@ -116,6 +124,27 @@ def compute_step_reward(
     # Bloqueou jogada de vitoria do adversario?
     if _blocked_opponent_winning_move(state_before, state_after, my_team):
         reward += config.blocked_opponent_winning_move
+
+    # Diversidade de professores: bonus/penalidade por troca
+    if professor_used is not None and last_professor is not None:
+        if professor_used != last_professor:
+            reward += config.used_different_professor
+        else:
+            reward += config.used_same_professor_streak
+
+    # Penalidade por professor ocioso
+    if prof_last_used_turn is not None:
+        my_profs = PROFESSORS_BY_TEAM[my_team]
+        current_turn = state_after.turn_number
+        for prof in my_profs:
+            if state_after.get_professor_position(prof) is None:
+                continue
+            last_used = prof_last_used_turn.get(prof, 0)
+            turns_idle = current_turn - last_used
+            if last_used > 0 and turns_idle > 2:
+                reward += config.professor_idle_penalty_per_turn * (turns_idle - 2)
+            elif last_used == 0 and current_turn > 4:
+                reward += config.professor_idle_penalty_per_turn * (current_turn - 4)
 
     return reward
 

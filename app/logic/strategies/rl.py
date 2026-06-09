@@ -235,26 +235,36 @@ def rl_setup(board) -> Optional[SetupResponse]:
     """Escolhe posicao de setup usando o modelo RL."""
     model = _load_model()
     if model is None:
+        print("[RL SETUP] Modelo nao carregado, usando heuristica")
         return heuristic_setup(board)
 
     try:
+        print("[RL SETUP DEBUG] === Fase de setup ===")
         obs = _encode_state(board, my_team=1, phase="setup_placement")
         mask = _build_action_mask(board, my_team=1, phase="setup_placement")
 
+        n_valid = int(mask.sum())
+        print(f"[RL SETUP DEBUG] Posicoes validas para setup: {n_valid}")
+
         if not mask.any():
+            print("[RL SETUP DEBUG] SEM POSICOES VALIDAS - retornando None")
             return None
 
         action, _ = model.predict(obs, action_masks=mask, deterministic=DETERMINISTIC)
         action = int(action)
 
         if action >= SETUP_ACTIONS_COUNT:
-            print(f"[RL] Acao invalida no setup: {action}, fallback")
+            print(f"[RL SETUP DEBUG] Acao invalida no setup: {action}, fallback")
             return heuristic_setup(board)
 
         row, col = _index_to_setup_action(action)
+        print(f"[RL SETUP DEBUG] Posicionando em ({row},{col}) - nivel atual={board[row][col].level}")
         return SetupResponse(row=row, col=col)
     except Exception as e:
-        print(f"[RL] Erro no setup: {e}, fallback heuristica")
+        import traceback
+        print(f"[RL SETUP] Erro no setup: {e}")
+        traceback.print_exc()
+        print("[RL SETUP] Fallback heuristica")
         return heuristic_setup(board)
 
 
@@ -262,28 +272,51 @@ def rl_turn(board, team_id: TeamID) -> Optional[PlayerTurnResponse]:
     """Escolhe jogada usando o modelo RL."""
     model = _load_model()
     if model is None:
+        print("[RL] Modelo nao carregado, usando heuristica")
         return heuristic_turn(board, team_id)
 
     try:
         team_int = int(team_id.value) if hasattr(team_id, "value") else int(team_id)
 
+        # LOG: estado recebido
+        print(f"\n[RL DEBUG] === Turno do time {team_int} ===")
+        print("[RL DEBUG] Board recebido:")
+        for r, row in enumerate(board):
+            row_str = ""
+            for c, cell in enumerate(row):
+                prof = cell.professor[:3] if cell.professor else "..."
+                row_str += f"[{cell.level}|{prof:>3}] "
+            print(f"  {row_str}")
+
+        # Posicoes dos meus professores
+        my_profs = PROFESSORS_BY_TEAM[team_int]
+        print(f"[RL DEBUG] Meus professores: {my_profs}")
+        for prof in my_profs:
+            for r in range(BOARD_SIZE):
+                for c in range(BOARD_SIZE):
+                    if board[r][c].professor == prof:
+                        print(f"  {prof} em ({r},{c}) - nivel {board[r][c].level}")
+
         obs = _encode_state(board, my_team=team_int, phase="player_turn")
         mask = _build_action_mask(board, my_team=team_int, phase="player_turn")
 
+        n_valid = int(mask.sum())
+        print(f"[RL DEBUG] Acoes validas: {n_valid}")
+
         if not mask.any():
-            print("[RL] Sem jogadas validas")
+            print("[RL DEBUG] SEM ACOES VALIDAS - retornando None")
             return None
 
         action, _ = model.predict(obs, action_masks=mask, deterministic=DETERMINISTIC)
         action = int(action)
 
         if action < SETUP_ACTIONS_COUNT:
-            print(f"[RL] Acao invalida no turno: {action}, fallback")
+            print(f"[RL DEBUG] ERRO: acao de setup na fase de turno: {action}")
             return heuristic_turn(board, team_id)
 
         decoded = _index_to_turn_action(action)
-        move_r, move_c = decoded["move_to"]
 
+        move_r, move_c = decoded["move_to"]
         response = PlayerTurnResponse(
             professor=decoded["professor"],
             move_to=Position(row=move_r, col=move_c),
@@ -294,7 +327,19 @@ def rl_turn(board, team_id: TeamID) -> Optional[PlayerTurnResponse]:
             mr, mc = decoded["mentor_at"]
             response.mentor_at = Position(row=mr, col=mc)
 
+        # LOG: jogada escolhida
+        print(f"[RL DEBUG] JOGADA: prof={response.professor}")
+        print(f"  move_to=({move_r},{move_c}) nivel={board[move_r][move_c].level}")
+        if response.mentor_at:
+            mr, mc = response.mentor_at.row, response.mentor_at.col
+            print(f"  mentor_at=({mr},{mc}) nivel atual={board[mr][mc].level}")
+        else:
+            print(f"  (jogada de vitoria - sem mentor_at)")
+
         return response
     except Exception as e:
-        print(f"[RL] Erro no turn: {e}, fallback heuristica")
+        import traceback
+        print(f"[RL] Erro no turn: {e}")
+        traceback.print_exc()
+        print("[RL] Fallback heuristica")
         return heuristic_turn(board, team_id)

@@ -95,6 +95,38 @@ def test_step_reward_dangerous_level_4():
     print(f"OK test_step_reward_dangerous_level_4 (r={r:.3f})")
 
 
+def test_step_reward_used_different_professor():
+    """Trocar de professor deve dar bonus."""
+    state_before = _setup_filled_state()
+    state_after = state_before.copy()
+
+    r = compute_step_reward(
+        state_before, state_after,
+        my_team=TEAM_TURING,
+        professor_used="REY",
+        last_professor="CLARO",
+    )
+    # bonus 0.15 - penalidade 0.01 = 0.14
+    assert r > 0, f"Esperado positivo (mudou professor), recebeu {r}"
+    print(f"OK test_step_reward_used_different_professor (r={r:.3f})")
+
+
+def test_step_reward_same_professor_streak():
+    """Usar mesmo professor seguidamente deve dar penalidade."""
+    state_before = _setup_filled_state()
+    state_after = state_before.copy()
+
+    r = compute_step_reward(
+        state_before, state_after,
+        my_team=TEAM_TURING,
+        professor_used="CLARO",
+        last_professor="CLARO",
+    )
+    # penalidade -0.10 - 0.01 = -0.11
+    assert r < 0, f"Esperado negativo (mesmo professor), recebeu {r}"
+    print(f"OK test_step_reward_same_professor_streak (r={r:.3f})")
+
+
 if __name__ == "__main__":
     test_terminal_reward_win()
     test_terminal_reward_loss()
@@ -102,4 +134,6 @@ if __name__ == "__main__":
     test_step_reward_no_op_only_penalty()
     test_step_reward_level_raise()
     test_step_reward_dangerous_level_4()
+    test_step_reward_used_different_professor()
+    test_step_reward_same_professor_streak()
     print("\nTodos os testes de recompensa passaram!")
