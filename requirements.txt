@@ -2,6 +2,7 @@ fastapi[standard]
 uvicorn
 pydantic
 numpy>=1.24
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.0
 sb3-contrib>=2.3
 stable-baselines3>=2.3
