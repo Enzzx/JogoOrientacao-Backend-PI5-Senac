@@ -23,7 +23,7 @@ from app.logic.strategies.heuristic import (
 )
 
 
-TOP_K_MOVES = 20
+TOP_K_MOVES = 15
 
 WIN_SCORE = 100_000.0
 LOSS_SCORE = -100_000.0
