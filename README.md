@@ -9,11 +9,18 @@ Backend do jogador inteligente para o **Jogo da Orientação** do Projeto Integr
 
 ## Como o jogador funciona
 
-A IA usa **Reinforcement Learning** com o algoritmo **PPO (Proximal Policy Optimization)** para aprender a jogar. O modelo foi treinado em milhões de partidas simuladas localmente, sem consumir a API do professor.
+A IA usa **Minimax com poda alfa-beta** como estratégia principal. O algoritmo simula várias jogadas à frente, alternando entre maximizar o próprio ganho e minimizar o ganho do adversário, escolhendo sempre a jogada que leva ao melhor resultado garantido.
 
-### Por que RL?
+### Por que Minimax?
 
-O Jogo da Orientação é um jogo de tabuleiro com decisões sequenciais. Reinforcement Learning é a técnica ideal para esse tipo de problema: o agente aprende sozinho, jogando, sem precisar de heurísticas escritas manualmente.
+O Jogo da Orientação tem características ideais para busca em árvore:
+
+- **Informação completa:** todo o tabuleiro é visível
+- **Determinístico:** não há aleatoriedade nas regras
+- **Dois jogadores alternados:** turnos bem definidos
+- **Tabuleiro pequeno (5×5):** permite buscar várias jogadas à frente
+
+Para esse tipo de jogo, Minimax com uma boa função de avaliação é mais forte e mais previsível que abordagens de aprendizado, jogando de forma consistente sem precisar de treino prévio.
 
 ---
 
@@ -25,75 +32,81 @@ O Jogo da Orientação é um jogo de tabuleiro com decisões sequenciais. Reinfo
 │   ├── main.py                 # Endpoints /health e /move
 │   ├── schemas.py              # DTOs (Pydantic)
 │   └── logic/
-│       ├── config.py           # Estrategia ativa (rl, heuristic, random)
-│       ├── rules.py            # Regras do jogo
+│       ├── config.py           # Estrategia ativa e parametros
+│       ├── rules.py            # Regras do jogo + simulacao de jogadas
 │       └── strategies/
 │           ├── random_bot.py   # Bot aleatorio
-│           ├── heuristic.py    # Heuristica (fallback)
-│           ├── minimax.py      # Minimax (placeholder)
-│           └── rl.py           # Estrategia RL (em uso)
+│           ├── heuristic.py    # Heuristica + funcao de avaliacao
+│           ├── minimax.py      # Minimax alfa-beta (EM USO)
+│           └── rl.py           # Reinforcement Learning (exploratorio)
 │
-└── training/                   # Codigo de treinamento (offline)
+└── training/                   # Codigo de RL (exploratorio, nao em producao)
     ├── game/                   # Simulador local do jogo
     ├── envs/                   # Ambiente Gymnasium + recompensas
-    └── train/                  # Scripts de treino
+    └── train/                  # Scripts de treino PPO/self-play
 ```
 
 ---
 
-## Estratégia de IA — detalhes técnicos
+## Estratégia de IA — Minimax com poda alfa-beta
 
-### Algoritmo: MaskablePPO
+### Como funciona
 
-Variante do PPO que suporta **action masking** — o modelo só considera jogadas válidas em cada turno. Isso acelera muito o aprendizado porque o agente não desperdiça tempo tentando jogadas ilegais.
+A cada turno, o algoritmo constrói uma árvore de possibilidades:
 
-### Estrutura da rede neural
+1. Gera todas as jogadas válidas para o jogador atual
+2. Para cada jogada, simula o tabuleiro resultante
+3. Simula a resposta do adversário (que tenta minimizar nosso ganho)
+4. Continua alternando até a profundidade definida
+5. Escolhe a jogada que leva ao melhor resultado garantido
 
-**Entrada:** tensor `5×5×9` (tabuleiro codificado)
+### Otimizações implementadas
 
-| Canal | Significado |
-|-------|-------------|
-| 0 | Nível de cada célula (normalizado 0–1) |
-| 1–4 | Posição one-hot de cada professor (CLARO, REY, KARIN, BEATRIZ) |
-| 5 | Células vazias |
-| 6 | Meus professores |
-| 7 | Fase do jogo |
-| 8 | Meu time |
+Como o jogo tem muitas jogadas possíveis por turno (40–66 em média), um Minimax puro não caberia no limite de 5 segundos. Foram aplicadas quatro otimizações:
 
-**Rede:** MLP `[256, 256]`  
-**Saída:** 2625 ações possíveis (25 setup + 2600 turn)
+**1. Poda alfa-beta**  
+Corta ramos da árvore que não podem influenciar a decisão final, reduzindo drasticamente o número de estados avaliados.
 
-### Função de recompensa
+**2. Move ordering**  
+As jogadas são ordenadas pela heurística antes de explorar a árvore. Avaliar primeiro as jogadas promissoras faz a poda alfa-beta cortar muito mais ramos.
 
-| Evento | Recompensa |
-|--------|-----------|
-| Vitória | +10 |
-| Derrota | −10 |
-| Empate | −1 |
-| Subir nível de aluno | +0.1 |
-| Criar nível 3 (próximo da vitória) | +0.3 |
-| Criar nível 4 seguro (só meu time alcança) | +0.5 |
-| Criar nível 4 perigoso (adversário alcança) | −0.8 |
-| Bloquear vitória do adversário | +0.4 |
-| Alternar entre professores | +0.5 |
-| Insistir no mesmo professor | −0.5 |
-| Professor parado por muitos turnos | −0.2/turno |
-| Por turno (incentiva ganhar rápido) | −0.01 |
+**3. Top-K filtering**  
+Em cada nível da árvore, apenas as K melhores jogadas (segundo a heurística) são consideradas, controlando o fator de ramificação.
 
-A penalidade por insistir no mesmo professor foi crucial: sem ela o modelo aprendia a focar apenas em um dos dois professores do time, o que funciona contra bots aleatórios mas falha contra adversários competentes.
+**4. Limite de tempo**  
+A busca para automaticamente antes do limite de segurança e retorna a melhor jogada encontrada até o momento, garantindo que nunca ultrapasse os 5 segundos da API.
 
-### Treinamento
+### Função de avaliação
 
-**Fase 1 — Contra bot aleatório (~1.5M timesteps)**
-- Objetivo: aprender regras básicas e estratégias iniciais
-- Resultado: 89–96% de win rate
+Quando a árvore atinge a profundidade máxima, cada tabuleiro é avaliado por uma função heurística que considera:
 
-**Fase 2 — Self-play (~2–3M timesteps adicionais)**
-- O modelo joga contra versões anteriores de si mesmo
-- Mantém um pool de gerações para evitar *catastrophic forgetting*
-- Resultado: gerações novas vencem gerações antigas em 70–96%
+- Proximidade dos meus professores a células de nível alto
+- Quão perto estou de uma vitória (célula nível 4 alcançável)
+- Ameaças do adversário (células nível 4 que ele pode alcançar — peso defensivo maior)
+- Nível das células ocupadas por cada time
+- Potencial de células nível 3 livres adjacentes
 
-Hardware usado: Intel i5, 16 GB RAM, sem GPU. Cada milhão de timesteps levou ~2 horas.
+Vitórias recebem pontuação máxima (priorizando ganhar rápido) e derrotas pontuação mínima (priorizando adiar a perda).
+
+### Parâmetros
+
+Configuráveis em `app/logic/config.py`:
+
+| Parâmetro | Valor | Descrição |
+|-----------|-------|-----------|
+| `MINIMAX_DEPTH` | 5 | Quantas jogadas à frente analisar |
+| `TOP_K_MOVES` | 15 | Jogadas consideradas por nível |
+| `MINIMAX_TIME_LIMIT_SECONDS` | 3.5 | Limite antes de parar a busca |
+
+---
+
+## Sobre a parte de Reinforcement Learning
+
+O diretório `training/` contém uma implementação completa de Reinforcement Learning (PPO + self-play) desenvolvida durante a exploração do projeto. O agente chegou a ~96% de win rate contra o bot aleatório.
+
+No entanto, observou-se que o modelo RL tendia a focar demais em um único professor e era menos consistente contra adversários competentes. Por isso, a estratégia Minimax foi escolhida como definitiva, por ser mais robusta, previsível e não depender de treino.
+
+O código de RL permanece no repositório como registro do trabalho exploratório e pode ser reativado trocando `ACTIVE_STRATEGY` para `"rl"` em `app/logic/config.py`.
 
 ---
 
@@ -104,10 +117,7 @@ Hardware usado: Intel i5, 16 GB RAM, sem GPU. Cada milhão de timesteps levou ~2
 Verifica se a API está rodando.
 
 ```json
-{
-  "status": "ok",
-  "timestamp": "2026-06-10T12:00:00"
-}
+{ "status": "ok", "timestamp": "2026-06-10T12:00:00" }
 ```
 
 ### `POST /move`
@@ -126,10 +136,7 @@ Endpoint chamado pelo orquestrador de partidas. Recebe o estado do turno e retor
 }
 ```
 
-**Response:**
-```json
-{ "row": 2, "col": 2 }
-```
+**Response:** `{ "row": 2, "col": 2 }`
 
 **Request — fase turn:**
 ```json
@@ -170,31 +177,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Acesse o Swagger: http://localhost:8001/docs
-
-**Treinar o modelo:**
-```bash
-pip install -r training/requirements.txt
-
-# Treino contra bot aleatorio
-python -m training.train.train_vs_random --timesteps 1500000
-
-# Self-play (apos modelo basico estar pronto)
-python -m training.train.train_self_play \
-  --base training/models/ppo_vs_random_final.zip \
-  --timesteps 2000000 \
-  --promote-every 500000
-```
-
-**Avaliar o modelo:**
-```bash
-python -m training.train.evaluate --episodes 200
-```
-
-**Acompanhar métricas em tempo real:**
-```bash
-tensorboard --logdir training/logs
-```
+Swagger: http://localhost:8001/docs
 
 ---
 
@@ -203,10 +186,10 @@ tensorboard --logdir training/logs
 A estratégia ativa é controlada em `app/logic/config.py`:
 
 ```python
-ACTIVE_STRATEGY = "rl"  # opcoes: "random", "heuristic", "minimax", "rl"
+ACTIVE_STRATEGY = "minimax"  # opcoes: "random", "heuristic", "minimax", "rl"
 ```
 
-Se o modelo RL falhar ao carregar, a API usa automaticamente a `heuristic` como fallback.
+Se a estratégia ativa falhar, a API cai automaticamente para a heurística como fallback.
 
 ---
 
@@ -216,8 +199,7 @@ Se o modelo RL falhar ao carregar, a API usa automaticamente a `heuristic` como 
 |------------|-----------|
 | Linguagem | Python 3.12 |
 | Framework Web | FastAPI |
-| ML | Stable Baselines 3 + sb3-contrib (MaskablePPO) |
-| Ambiente RL | Gymnasium |
+| Algoritmo principal | Minimax com poda alfa-beta |
 | Deploy | Railway |
 
 ---
@@ -226,15 +208,7 @@ Se o modelo RL falhar ao carregar, a API usa automaticamente a `heuristic` como 
 
 | Métrica | Valor |
 |---------|-------|
-| Win rate vs Random Bot | ~89–96% |
-| Tempo de resposta | < 200 ms |
-| Treinamento total | ~10 horas |
-| Timesteps totais | ~5M |
-
----
-
-## Limitações conhecidas
-
-- Em algumas partidas o modelo prefere usar um professor mais que o outro
-- Estratégia é principalmente ofensiva (foca em vencer rápido)
-- Foi treinado contra bot aleatório + self-play, não contra adversários humanos
+| Win rate vs Random Bot | ~100% |
+| Tempo de resposta médio | 1–3 s (limite de 3.5 s configurado) |
+| Usa todos os professores do time | Sim |
+| Detecta vitórias garantidas | Sim |
