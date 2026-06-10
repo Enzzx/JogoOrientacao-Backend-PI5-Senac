@@ -145,22 +145,31 @@ def _opponent_can_reach(
 def evaluate_board(board: List[List[Cell]], team_id: TeamID) -> float:
     """Avalia quão bom é o tabuleiro para team_id.
 
-    Usado como função de avaliação nas folhas do Minimax.
+    Versão ofensiva: prioriza construir vantagem própria (caminho de
+    níveis crescentes perto dos meus professores) em vez de só reagir.
     """
     opp_team = TeamID.LOVELACE if team_id == TeamID.TURING else TeamID.TURING
     my_profs = get_team_professors(team_id)
     opp_profs = get_team_professors(opp_team)
 
     score = 0.0
+    my_best_prof_level = 0
+    opp_best_prof_level = 0
 
     for r, row in enumerate(board):
         for c, cell in enumerate(row):
             if cell.professor in my_profs:
+                score += cell.level * 3.0
                 score += _professor_threat_value(board, r, c, cell.level)
-                score += cell.level * 1.5
+                score += _progression_potential(board, r, c, cell.level)
+                my_best_prof_level = max(my_best_prof_level, cell.level)
             elif cell.professor in opp_profs:
+                score -= cell.level * 2.0
                 score -= _professor_threat_value(board, r, c, cell.level)
-                score -= cell.level * 1.5
+                opp_best_prof_level = max(opp_best_prof_level, cell.level)
+
+    # Corrida: incentiva tomar a iniciativa em vez de ficar em 0.0
+    score += (my_best_prof_level - opp_best_prof_level) * 4.0
 
     for r, row in enumerate(board):
         for c, cell in enumerate(row):
@@ -168,16 +177,36 @@ def evaluate_board(board: List[List[Cell]], team_id: TeamID) -> float:
                 continue
             if cell.level == WINNING_LEVEL:
                 if _team_can_reach_cell(board, team_id, r, c):
-                    score += 4.0
+                    score += 6.0
                 if _team_can_reach_cell(board, opp_team, r, c):
                     score -= 5.0
             elif cell.level == 3:
                 if _team_can_reach_cell(board, team_id, r, c):
-                    score += 1.5
+                    score += 2.5
                 if _team_can_reach_cell(board, opp_team, r, c):
                     score -= 2.0
 
     return score
+
+
+def _progression_potential(
+    board: List[List[Cell]], row: int, col: int, prof_level: int
+) -> float:
+    """Recompensa ter células adjacentes que formam um caminho de subida.
+
+    Incentiva construir uma 'escada' de níveis em vez de ficar parado.
+    """
+    value = 0.0
+    for adj in get_adjacent_positions(board, Position(row=row, col=col)):
+        adj_cell = board[adj.row][adj.col]
+        if adj_cell.professor is not None:
+            continue
+        diff = adj_cell.level - prof_level
+        if diff == 1:
+            value += 1.5  # posso subir para cá
+        elif diff == 0 and adj_cell.level > 0:
+            value += 0.5
+    return value
 
 
 def _professor_threat_value(

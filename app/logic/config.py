@@ -5,7 +5,7 @@ ACTIVE_STRATEGY = "minimax"
 
 # Configurações do Minimax
 MINIMAX_DEPTH = 5
-MINIMAX_TIME_LIMIT_SECONDS = 3.5  # margem antes dos 5s da API
+MINIMAX_TIME_LIMIT_SECONDS = 3.4  # margem antes dos 5s da API
 
 # Times
 TEAM_TURING_PROFESSORS = ["CLARO", "REY"]
