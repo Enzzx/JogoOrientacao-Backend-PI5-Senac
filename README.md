@@ -2,7 +2,6 @@
 
 Backend do jogador inteligente para o **Jogo da Orientação** do Projeto Integrador 5 do Senac.
 
-**Autor:** Wagner Sanches — Análise e Desenvolvimento de Sistemas  
 **API:** https://pi5-api-production.up.railway.app
 
 ---
@@ -21,92 +20,6 @@ O Jogo da Orientação tem características ideais para busca em árvore:
 - **Tabuleiro pequeno (5×5):** permite buscar várias jogadas à frente
 
 Para esse tipo de jogo, Minimax com uma boa função de avaliação é mais forte e mais previsível que abordagens de aprendizado, jogando de forma consistente sem precisar de treino prévio.
-
----
-
-## Arquitetura
-
-```
-.
-├── app/                        # Codigo de producao (API)
-│   ├── main.py                 # Endpoints /health e /move
-│   ├── schemas.py              # DTOs (Pydantic)
-│   └── logic/
-│       ├── config.py           # Estrategia ativa e parametros
-│       ├── rules.py            # Regras do jogo + simulacao de jogadas
-│       └── strategies/
-│           ├── random_bot.py   # Bot aleatorio
-│           ├── heuristic.py    # Heuristica + funcao de avaliacao
-│           ├── minimax.py      # Minimax alfa-beta (EM USO)
-│           └── rl.py           # Reinforcement Learning (exploratorio)
-│
-└── training/                   # Codigo de RL (exploratorio, nao em producao)
-    ├── game/                   # Simulador local do jogo
-    ├── envs/                   # Ambiente Gymnasium + recompensas
-    └── train/                  # Scripts de treino PPO/self-play
-```
-
----
-
-## Estratégia de IA — Minimax com poda alfa-beta
-
-### Como funciona
-
-A cada turno, o algoritmo constrói uma árvore de possibilidades:
-
-1. Gera todas as jogadas válidas para o jogador atual
-2. Para cada jogada, simula o tabuleiro resultante
-3. Simula a resposta do adversário (que tenta minimizar nosso ganho)
-4. Continua alternando até a profundidade definida
-5. Escolhe a jogada que leva ao melhor resultado garantido
-
-### Otimizações implementadas
-
-Como o jogo tem muitas jogadas possíveis por turno (40–66 em média), um Minimax puro não caberia no limite de 5 segundos. Foram aplicadas quatro otimizações:
-
-**1. Poda alfa-beta**  
-Corta ramos da árvore que não podem influenciar a decisão final, reduzindo drasticamente o número de estados avaliados.
-
-**2. Move ordering**  
-As jogadas são ordenadas pela heurística antes de explorar a árvore. Avaliar primeiro as jogadas promissoras faz a poda alfa-beta cortar muito mais ramos.
-
-**3. Top-K filtering**  
-Em cada nível da árvore, apenas as K melhores jogadas (segundo a heurística) são consideradas, controlando o fator de ramificação.
-
-**4. Limite de tempo**  
-A busca para automaticamente antes do limite de segurança e retorna a melhor jogada encontrada até o momento, garantindo que nunca ultrapasse os 5 segundos da API.
-
-### Função de avaliação
-
-Quando a árvore atinge a profundidade máxima, cada tabuleiro é avaliado por uma função heurística que considera:
-
-- Proximidade dos meus professores a células de nível alto
-- Quão perto estou de uma vitória (célula nível 4 alcançável)
-- Ameaças do adversário (células nível 4 que ele pode alcançar — peso defensivo maior)
-- Nível das células ocupadas por cada time
-- Potencial de células nível 3 livres adjacentes
-
-Vitórias recebem pontuação máxima (priorizando ganhar rápido) e derrotas pontuação mínima (priorizando adiar a perda).
-
-### Parâmetros
-
-Configuráveis em `app/logic/config.py`:
-
-| Parâmetro | Valor | Descrição |
-|-----------|-------|-----------|
-| `MINIMAX_DEPTH` | 5 | Quantas jogadas à frente analisar |
-| `TOP_K_MOVES` | 15 | Jogadas consideradas por nível |
-| `MINIMAX_TIME_LIMIT_SECONDS` | 3.5 | Limite antes de parar a busca |
-
----
-
-## Sobre a parte de Reinforcement Learning
-
-O diretório `training/` contém uma implementação completa de Reinforcement Learning (PPO + self-play) desenvolvida durante a exploração do projeto. O agente chegou a ~96% de win rate contra o bot aleatório.
-
-No entanto, observou-se que o modelo RL tendia a focar demais em um único professor e era menos consistente contra adversários competentes. Por isso, a estratégia Minimax foi escolhida como definitiva, por ser mais robusta, previsível e não depender de treino.
-
-O código de RL permanece no repositório como registro do trabalho exploratório e pode ser reativado trocando `ACTIVE_STRATEGY` para `"rl"` em `app/logic/config.py`.
 
 ---
 
